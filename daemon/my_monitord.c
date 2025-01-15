@@ -122,19 +122,32 @@ float get_cpu_temp() {
 
 // Функция для получения текущей нагрузки на CPU
 float get_cpu_load() {
-    FILE *fp = fopen("/proc/loadavg", "r");
+    FILE *fp = fopen("/proc/stat", "r");
     if (!fp) {
-        log_error("Failed to open /proc/loadavg");
+        log_error("Failed to open /proc/stat");
         return -1.0;
     }
 
-    float load;
-    if (fscanf(fp, "%f", &load) != 1) {
-        log_error("Failed to read CPU load");
+    unsigned long long user, nice, system, idle, iowait, irq, softirq, steal;
+    if (fscanf(fp, "cpu  %llu %llu %llu %llu %llu %llu %llu %llu", 
+               &user, &nice, &system, &idle, &iowait, &irq, &softirq, &steal) != 8) {
+        log_error("Failed to read CPU stats");
         fclose(fp);
         return -1.0;
     }
     fclose(fp);
+
+    // Вычисляем общее время работы процессора
+    unsigned long long total = user + nice + system + idle + iowait + irq + softirq + steal;
+
+    // Вычисляем время, когда процессор был занят (не в idle)
+    unsigned long long busy = user + nice + system + iowait + irq + softirq + steal;
+
+    // Рассчитываем загрузку процессора в процентах
+    float load = ((float)busy / total) * 100.0;
+
+    // Выводим результат
+
     return load;
 }
 
