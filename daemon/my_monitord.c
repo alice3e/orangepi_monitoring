@@ -59,7 +59,6 @@ void get_mem_usage(const char *path, unsigned long *used, unsigned long *total) 
     *used = *total - free_space;
 }
 
-// Функция для получения текущего использования оперативной памяти (в процентах)
 float get_ram_usage() {
     FILE *fp = fopen("/proc/meminfo", "r");
     if (!fp) {
@@ -77,6 +76,8 @@ float get_ram_usage() {
         } else if (strcmp(label, "MemAvailable:") == 0) {
             mem_available = mem_available;
         }
+
+        // Проверяем, что оба значения считаны
         if (mem_total > 0 && mem_available > 0) {
             break;
         }
@@ -84,17 +85,18 @@ float get_ram_usage() {
     fclose(fp);
 
     if (mem_total == 0 || mem_available == 0) {
-        log_error("Failed to retrieve memory usage data");
+        log_error("Failed to retrieve memory usage data: mem_total or mem_available is zero");
         return -1.0;
     }
 
-    if (mem_total - mem_available <= 0){
-        log_error("Failed to calculate memory usage data (mem_total - mem_available <= 0) \n");
+    if (mem_total <= mem_available) {
+        log_error("Invalid memory data: mem_total <= mem_available");
         return -1.0;
     }
 
     // Вычисление использования памяти в процентах
-    return ((mem_total - mem_available) / (float)mem_total) * 100.0;
+    float usage = ((mem_total - mem_available) / (float)mem_total) * 100.0;
+    return usage;
 }
 
 
