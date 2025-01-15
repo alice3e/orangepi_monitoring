@@ -13,7 +13,7 @@
 #define TIME_FORMAT "%Y-%m-%d %H:%M:%S"
 #define JSON_BUFFER_SIZE 512
 #define HOSTNAME_BUFFER_SIZE 128
-#define SLEEP_TIME 10
+#define SLEEP_TIME 60
 #define LOG_FILE "/var/log/my_monitord.log"
 
 // Функция для получения текущего времени в виде строки
