@@ -14,14 +14,7 @@
 #define JSON_BUFFER_SIZE 512
 #define HOSTNAME_BUFFER_SIZE 128
 #define SLEEP_TIME 10
-
-// Функция для получения имени хоста устройства
-void get_hostname(char *buffer, size_t size) {
-    if (gethostname(buffer, size) != 0) {
-        perror("Failed to get hostname");
-        strncpy(buffer, "unknown", size); // Устанавливаем значение по умолчанию
-    }
-}
+#define LOG_FILE "/var/log/my_monitord.log"
 
 // Функция для получения текущего времени в виде строки
 void get_current_time(char *buffer, size_t size) {
@@ -30,165 +23,139 @@ void get_current_time(char *buffer, size_t size) {
     strftime(buffer, size, TIME_FORMAT, local_time);
 }
 
+// Функция для записи ошибок в лог-файл
+void log_error(const char *message) {
+    char time_str[64];
+    get_current_time(time_str, sizeof(time_str));
+    
+    FILE *log_file = fopen(LOG_FILE, "a");
+    if (log_file) {
+        fprintf(log_file, "[%s] ERROR: %s\n", time_str, message);
+        fclose(log_file);
+    }
+}
+
+// Функция для получения имени хоста устройства
+void get_hostname(char *buffer, size_t size) {
+    if (gethostname(buffer, size) != 0) {
+        log_error("Failed to get hostname");
+        strncpy(buffer, "unknown", size);
+    }
+}
+
 // Функция для получения использования памяти на файловой системе
 void get_mem_usage(const char *path, unsigned long *used, unsigned long *total) {
     struct statvfs stats;
 
-    // Получаем статистику для указанного пути
     if (statvfs(path, &stats) != 0) {
-        perror("Failed to get filesystem statistics");
+        log_error("Failed to get filesystem statistics");
         *used = 0;
         *total = 0;
-        exit(EXIT_FAILURE);
+        return;
     }
 
-    // Общее пространство файловой системы
     *total = stats.f_blocks * stats.f_frsize;
-
-    // Свободное пространство файловой системы
     unsigned long free_space = stats.f_bfree * stats.f_frsize;
-
-    // Занятое пространство
     *used = *total - free_space;
 }
 
-// Функция для получения температуры процессора (в градусах Цельсия)
+// Функция для получения температуры процессора
 float get_cpu_temp() {
     FILE *fp = fopen("/sys/class/thermal/thermal_zone0/temp", "r");
     if (!fp) {
-        perror("Failed to open /sys/class/thermal/thermal_zone0/temp");
+        log_error("Failed to open /sys/class/thermal/thermal_zone0/temp");
         return -1.0;
     }
 
     int temp_millidegree;
     if (fscanf(fp, "%d", &temp_millidegree) != 1) {
-        perror("Failed to read CPU temperature");
+        log_error("Failed to read CPU temperature");
         fclose(fp);
         return -1.0;
     }
     fclose(fp);
 
-    // Конвертация температуры из тысячных долей градуса в градусы
     return temp_millidegree / 1000.0;
-}
-
-// Функция для получения текущего использования оперативной памяти (в процентах)
-float get_ram_usage() {
-    FILE *fp = fopen("/proc/meminfo", "r");
-    if (!fp) {
-        perror("Failed to open /proc/meminfo");
-        return -1.0;
-    }
-
-    unsigned long mem_total = 0, mem_available = 0;
-    char label[32];
-
-    // Чтение значений MemTotal и MemAvailable из файла /proc/meminfo
-    while (fscanf(fp, "%31s %lu kB", label, &mem_total) == 2) {
-        if (strcmp(label, "MemTotal:") == 0) {
-            mem_total = mem_available;
-        } else if (strcmp(label, "MemAvailable:") == 0) {
-            mem_available = mem_available;
-        }
-        if (mem_total && mem_available) {
-            break;
-        }
-    }
-    fclose(fp);
-
-    if (!mem_total) {
-        fprintf(stderr, "Failed to retrieve memory usage data\n");
-        return -1.0;
-    }
-
-    // Вычисление использования памяти в процентах
-    return ((mem_total - mem_available) / (float)mem_total) * 100.0;
 }
 
 // Функция для получения текущей нагрузки на CPU
 float get_cpu_load() {
     FILE *fp = fopen("/proc/loadavg", "r");
     if (!fp) {
-        perror("Failed to open /proc/loadavg");
+        log_error("Failed to open /proc/loadavg");
         return -1.0;
     }
 
     float load;
-    fscanf(fp, "%f", &load);
+    if (fscanf(fp, "%f", &load) != 1) {
+        log_error("Failed to read CPU load");
+        fclose(fp);
+        return -1.0;
+    }
     fclose(fp);
     return load;
 }
 
 // Функция для отправки HTTP POST запроса с JSON-данными
 void send_post_request(const char *url, const char *json_data) {
-    CURL *curl;
-    CURLcode res;
-
-    if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
-        fprintf(stderr, "curl_global_init() failed\n");
-        exit(EXIT_FAILURE);
-    }
-
-    curl = curl_easy_init();
+    CURL *curl = curl_easy_init();
     if (!curl) {
-        fprintf(stderr, "curl_easy_init() failed\n");
-        curl_global_cleanup();
-        exit(EXIT_FAILURE);
+        log_error("curl_easy_init() failed");
+        return;
     }
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
-
     struct curl_slist *headers = NULL;
     headers = curl_slist_append(headers, "Content-Type: application/json");
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_data);
 
-    res = curl_easy_perform(curl);
-
+    CURLcode res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
-        fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+        char error_message[256];
+        snprintf(error_message, sizeof(error_message), "curl_easy_perform() failed: %s", curl_easy_strerror(res));
+        log_error(error_message);
     }
 
     curl_easy_cleanup(curl);
     curl_slist_free_all(headers);
-    curl_global_cleanup();
 }
 
 int main() {
+    // Демонизация процесса
     pid_t pid = fork();
     if (pid < 0) {
-        exit(EXIT_FAILURE); // Ошибка при создании процесса
+        perror("Fork failed");
+        exit(EXIT_FAILURE);
     }
-
     if (pid > 0) {
-        exit(EXIT_SUCCESS); // Родительский процесс завершает выполнение
+        exit(EXIT_SUCCESS); // Родитель завершает работу
     }
 
-    // Создание нового сеанса
-    pid_t sid = setsid();
-    if (sid < 0) {
-        exit(EXIT_FAILURE); // Ошибка при создании сеанса
-    }
-
-    // Изменение текущего рабочего каталога
-    if (chdir("/") < 0) {
+    if (setsid() < 0) {
+        log_error("Failed to create new session");
         exit(EXIT_FAILURE);
     }
 
-    // Закрытие стандартных файловых дескрипторов
-    close(STDIN_FILENO);
-    close(STDOUT_FILENO);
-    close(STDERR_FILENO);
-
-    // Открытие лог-файла для записи
-    FILE *log_file = fopen("/var/log/my_monitord.log", "a");
-    if (log_file) {
-        fprintf(log_file, "Daemon started\n");
+    if (chdir("/") < 0) {
+        log_error("Failed to change directory to /");
+        exit(EXIT_FAILURE);
     }
 
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+
+    // Перенаправление stderr в лог-файл
+    int log_fd = open(LOG_FILE, O_WRONLY | O_CREAT | O_APPEND, 0640);
+    if (log_fd < 0) {
+        exit(EXIT_FAILURE); // Не удалось открыть лог-файл
+    }
+    dup2(log_fd, STDERR_FILENO);
+    close(log_fd);
+
     char time_str[64];
-    char json_data[JSON_BUFFER_SIZE];
     char hostname[HOSTNAME_BUFFER_SIZE];
+    char json_data[JSON_BUFFER_SIZE];
 
     while (1) {
         get_current_time(time_str, sizeof(time_str));
@@ -205,14 +172,12 @@ int main() {
                  "{\"hostname\": \"%s\", \"time\": \"%s\", \"cpu_load\": %.2f, \"cpu_temp\": %.2f, "
                  "\"ram_usage\": %.2f, \"disk_usage\": %.2f, \"disk_total\": %.2f}",
                  hostname, time_str, cpu_load, cpu_temp, ram_usage,
-                 disk_used / (1024.0 * 1024.0 * 1024.0), // Конвертируем в GB
+                 disk_used / (1024.0 * 1024.0 * 1024.0),
                  disk_total / (1024.0 * 1024.0 * 1024.0));
 
-
         send_post_request(URL, json_data);
-
         sleep(SLEEP_TIME);
     }
-    
-    exit(EXIT_SUCCESS);
+
+    return 0;
 }
