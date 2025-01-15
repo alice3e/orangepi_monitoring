@@ -59,6 +59,44 @@ void get_mem_usage(const char *path, unsigned long *used, unsigned long *total) 
     *used = *total - free_space;
 }
 
+// Функция для получения текущего использования оперативной памяти (в процентах)
+float get_ram_usage() {
+    FILE *fp = fopen("/proc/meminfo", "r");
+    if (!fp) {
+        log_error("Failed to open /proc/meminfo");
+        return -1.0;
+    }
+
+    unsigned long mem_total = 0, mem_available = 0;
+    char label[32];
+
+    // Чтение значений MemTotal и MemAvailable из файла /proc/meminfo
+    while (fscanf(fp, "%31s %lu kB", label, &mem_total) == 2) {
+        if (strcmp(label, "MemTotal:") == 0) {
+            mem_total = mem_available;
+        } else if (strcmp(label, "MemAvailable:") == 0) {
+            mem_available = mem_available;
+        }
+        if (mem_total && mem_available) {
+            break;
+        }
+    }
+    fclose(fp);
+
+    if (!mem_total) {
+        log_error("Failed to retrieve memory usage data\n");
+        return -1.0;
+    }
+
+    if (mem_total - mem_available <= 0){
+        log_error("Failed to calculate memory usage data (mem_total - mem_available <= 0) \n");
+        return -1.0;
+    }
+
+    // Вычисление использования памяти в процентах
+    return ((mem_total - mem_available) / (float)mem_total) * 100.0;
+}
+
 // Функция для получения температуры процессора
 float get_cpu_temp() {
     FILE *fp = fopen("/sys/class/thermal/thermal_zone0/temp", "r");
