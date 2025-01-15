@@ -1,5 +1,7 @@
 #!/bin/bash
 
+sudo pkill my_monitord
+
 if [ ! -f ./my_monitord ]; then
 	rm -rf my_monitord
 fi
